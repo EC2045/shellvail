@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="ja" dir="rtl" data-font="handwriting">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shellvail — シェル文字タイピング・変換ツール</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* ローカルフォント定義 */
+        @font-face {
+            font-family: "ShellfunHandwriting";
+            src: url("shellfun_handwriting.otf") format("opentype");
+            font-display: swap;
+        }
+
+        @font-face {
+            font-family: "ShellfunPixel";
+            src: url("shellfun_pixel.ttf") format("truetype");
+            font-display: swap;
+        }
+
+        :root {
+            --bg: #f6f1e7;
+            --fg: #1d1b17;
+            --mut: #6b655a;
+            --card: #fffdf8;
+            --line: #ddd3bf;
+            --acc: #2f6f5e;
+            --acc-hover: #235447;
+            --latin: "Iowan Old Style", "Palatino Linotype", Georgia, "Hiragino Mincho ProN", serif;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #171613;
+                --fg: #ece6d8;
+                --mut: #a39c8c;
+                --card: #211f1b;
+                --line: #38342c;
+                --acc: #7cc4ae;
+                --acc-hover: #96d4c1;
+            }
+        }
+
+        html[data-font="handwriting"] {
+            --script: "ShellfunHandwriting", "CustomShellfunHandwriting", var(--latin);
+        }
+
+        html[data-font="pixel"] {
+            --script: "ShellfunPixel", "CustomShellfunPixel", var(--latin);
+        }
+
+        /* RTL (Shell文字フォント優先) / LTR (ラテン文字) */
+        html[dir="rtl"] .sv {
+            font-family: var(--script);
+            unicode-bidi: bidi-override;
+            direction: rtl;
+        }
+
+        html[dir="ltr"] .sv {
+            font-family: var(--latin);
+        }
+
+        /* 数字は常に LTR */
+        .num {
+            direction: ltr;
+            unicode-bidi: isolate;
+            display: inline-block;
+            font-family: var(--latin);
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--fg);
+            font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+            min-height: 100vh;
+        }
+
+        .border-theme {
+            border-color: var(--line);
+        }
+
+        .bg-card {
+            background-color: var(--card);
+        }
+
+        .text-acc {
+            color: var(--acc);
+        }
+
+        .bg-acc {
+            background-color: var(--acc);
+        }
+
+        .text-mut {
+            color: var(--mut);
+        }
+
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--line);
+            border-radius: 3px;
+        }
+
+        /* アニメーション */
+        .key-btn {
+            transition: all 0.1s ease;
+        }
+        .key-btn:active {
+            transform: scale(0.93);
+        }
+
+        /* 擬似シェル文字グリフ用 (フォント未読み込み時のビジュアル) */
+        .glyph-render {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+    </style>
+</head>
+
+<body class="p-2 sm:p-4 md:p-6 transition-colors duration-200">
+
+    <!-- ヘッダー・操作バー -->
+    <header class="sticky top-0 z-20 backdrop-blur-md bg-opacity-90 border-b border-theme pb-3 mb-6" style="background-color: rgba(246,241,231,0.85);">
+        <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-acc tracking-wide flex items-center gap-2">
+                    <span class="sv text-3xl">Shellvail</span>
+                    <span class="text-xs bg-acc/10 text-acc px-2 py-0.5 rounded-full border border-acc/20 font-sans">シェル文字入力器</span>
+                </h1>
+            </div>
+
+            <!-- スイッチ群 -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- 方向切り替え -->
+                <div class="inline-flex border border-theme rounded-full p-0.5 bg-card" id="dirSeg">
+                    <button data-v="rtl" class="px-3 py-1 text-xs rounded-full transition-all duration-200 font-medium text-mut aria-pressed:bg-acc aria-pressed:text-white" aria-pressed="true">RTL (右書)</button>
+                    <button data-v="ltr" class="px-3 py-1 text-xs rounded-full transition-all duration-200 font-medium text-mut aria-pressed:bg-acc aria-pressed:text-white" aria-pressed="false">LTR (ラテン)</button>
+                </div>
+
+                <!-- フォント切り替え -->
+                <div class="inline-flex border border-theme rounded-full p-0.5 bg-card" id="fontSeg">
+                    <button data-v="handwriting" class="px-3 py-1 text-xs rounded-full transition-all duration-200 font-medium text-mut aria-pressed:bg-acc aria-pressed:text-white" aria-pressed="true">Handwriting</button>
+                    <button data-v="pixel" class="px-3 py-1 text-xs rounded-full transition-all duration-200 font-medium text-mut aria-pressed:bg-acc aria-pressed:text-white" aria-pressed="false">Pixel</button>
+                </div>
+
+                <!-- フォントファイル読み込み -->
+                <label class="cursor-pointer text-xs px-3 py-1.5 rounded-full border border-theme bg-card hover:border-acc text-mut flex items-center gap-1 transition-all">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                    <span>.otf/.ttf 読み込み</span>
+                    <input type="file" id="fontFileInput" accept=".otf,.ttf" class="hidden">
+                </label>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto space-y-6">
+
+        <!-- テキストエリア・リアルタイムプレビュー -->
+        <section class="grid grid-cols-1 md:grid-cols-12 gap-4">
+            
+            <!-- エディタ本体 -->
+            <div class="md:col-span-7 flex flex-col gap-3">
+                <div class="flex items-center justify-between px-1">
+                    <label for="editor" class="text-xs font-semibold uppercase tracking-wider text-mut">入力エリア (アルファベット / Shellvail)</label>
+                    <div class="flex items-center gap-2">
+                        <button id="btnClear" class="text-xs text-mut hover:text-red-500 transition-colors">消去</button>
+                        <span class="text-mut text-xs">•</span>
+                        <button id="btnCopy" class="text-xs text-acc font-medium hover:underline">コピー</button>
+                    </div>
+                </div>
+
+                <div class="relative rounded-2xl border border-theme bg-card shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500/50">
+                    <textarea id="editor" rows="5" class="sv w-full p-4 bg-transparent outline-none text-2xl sm:text-3xl resize-y min-h-[140px]" placeholder="¡ Miitam !（ここにタイピング）..."></textarea>
+                    
+                    <div class="border-t border-theme px-4 py-2 bg-black/5 dark:bg-white/5 flex items-center justify-between text-xs text-mut">
+                        <span id="charStats">0 文字</span>
+                        <span class="text-[11px]" id="fontStatusNotice">※フォントファイル未指定時はSVGシンボルで代替描画可能</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 疑似レンダラー / プレビュー表示 -->
+            <div class="md:col-span-5 flex flex-col gap-3">
+                <div class="flex items-center justify-between px-1">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-mut">視覚化プレビュー (シェル文字グラフィック)</span>
+                    <button id="btnExportImg" class="text-xs text-acc font-medium hover:underline">画像化</button>
+                </div>
+
+                <div id="previewCard" class="flex-1 rounded-2xl border border-theme bg-card p-4 flex flex-col justify-between shadow-sm min-h-[180px]">
+                    <!-- グラフィック描画コンテナ -->
+                    <div id="symbolRenderArea" class="flex flex-wrap items-center gap-2 p-2 overflow-y-auto max-h-[180px] min-h-[100px]" dir="rtl">
+                        <span class="text-sm text-mut italic">入力された文字のシェル文様表現がここに表示されます...</span>
+                    </div>
+
+                    <div class="pt-2 border-t border-theme/50 text-[11px] text-mut flex justify-between items-center">
+                        <span>RTL: 右から左へ進行</span>
+                        <span class="italic">Shellvail Language System</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- タブコントロール: キーボード / 単語辞書 / 例文 -->
+        <section class="rounded-2xl border border-theme bg-card p-4 shadow-sm">
+            <div class="flex border-b border-theme mb-4 gap-4 text-sm font-medium overflow-x-auto">
+                <button data-tab="tab-keyboard" class="tab-btn pb-2 border-b-2 border-acc text-acc">仮想シェルキーボード</button>
+                <button data-tab="tab-dictionary" class="tab-btn pb-2 border-b-2 border-transparent text-mut hover:text-fg">単語・フレーズ辞書</button>
+                <button data-tab="tab-grammar" class="tab-btn pb-2 border-b-2 border-transparent text-mut hover:text-fg">助詞・音素ガイド</button>
+            </div>
+
+            <!-- タブ 1: オンスクリーンキーボード -->
+            <div id="tab-keyboard" class="tab-content space-y-4">
+                <!-- 母音 -->
+                <div>
+                    <span class="text-xs font-semibold text-mut block mb-2">母音 (Vowels)</span>
+                    <div class="flex flex-wrap gap-1.5" id="vowelKeys"></div>
+                </div>
+
+                <!-- 子音 -->
+                <div>
+                    <span class="text-xs font-semibold text-mut block mb-2">子音 (Consonants)</span>
+                    <div class="flex flex-wrap gap-1.5" id="consonantKeys"></div>
+                </div>
+
+                <!-- 記号・操作 -->
+                <div>
+                    <span class="text-xs font-semibold text-mut block mb-2">記号・制御 (Punctuation & Control)</span>
+                    <div class="flex flex-wrap gap-1.5" id="controlKeys"></div>
+                </div>
+            </div>
+
+            <!-- タブ 2: 辞書ワンクリック入力 -->
+            <div id="tab-dictionary" class="tab-content hidden space-y-4">
+                <p class="text-xs text-mut">クリックするとエディタに直接挿入されます。</p>
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2" id="dictionaryGrid"></div>
+            </div>
+
+            <!-- タブ 3: 助詞と音素のガイド -->
+            <div id="tab-grammar" class="tab-content hidden space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <h3 class="text-xs font-bold text-acc uppercase mb-2">助詞一覧 (Particles)</h3>
+                        <div class="space-y-1.5" id="particleList"></div>
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-bold text-acc uppercase mb-2">例文・パングラム</h3>
+                        <div class="space-y-2" id="exampleList"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- メッセージ・通知トースト -->
+        <div id="toast" class="fixed bottom-4 right-4 bg-acc text-white text-sm px-4 py-2 rounded-xl shadow-lg opacity-0 pointer-events-none transition-all duration-300 transform translate-y-2 z-50">
+            メッセージ
+        </div>
+
+    </main>
+
+    <!-- スクリプト部 -->
+    <script>
+        // --- データ定義 ---
+        const DATA = {
+            vowels: [
+                { sv: "a", ipa: "a" }, { sv: "e", ipa: "e" }, { sv: "i", ipa: "i" },
+                { sv: "o", ipa: "o" }, { sv: "u", ipa: "u" }, { sv: "ã", ipa: "ɑ̃" }
+            ],
+            consonants: [
+                { sv: "p", ipa: "p" }, { sv: "b", ipa: "b" }, { sv: "t", ipa: "t" },
+                { sv: "d", ipa: "d" }, { sv: "k", ipa: "k" }, { sv: "c", ipa: "k" },
+                { sv: "g", ipa: "g" }, { sv: "f", ipa: "f" }, { sv: "v", ipa: "v" },
+                { sv: "s", ipa: "s" }, { sv: "z", ipa: "z" }, { sv: "h", ipa: "h" },
+                { sv: "m", ipa: "m" }, { sv: "n", ipa: "n" }, { sv: "l", ipa: "l" },
+                { sv: "r", ipa: "ɹ" }, { sv: "w", ipa: "w" }, { sv: "y", ipa: "j" },
+                { sv: "j", ipa: "j" }, { sv: "sh", ipa: "ʃ" }
+            ],
+            controls: [
+                { label: "¿", val: "¿" }, { label: "?", val: "?" },
+                { label: "¡", val: "¡" }, { label: "!", val: "!" },
+                { label: "ハイフン -", val: "-" }, { label: "アポストロフィ '", val: "'" },
+                { label: "スペース", val: " " }, { label: "改行", val: "\n" }
+            ],
+            particles: [
+                ["si", "主題 ～は"], ["do", "主語 ～が"], ["lo", "目的語 ～を"],
+                ["tor", "～に"], ["nar", "～へ・～で"], ["de", "～の"],
+                ["Madan", "～と一緒に"], ["Mento", "～から"], ["Mala", "～も"]
+            ],
+            dictionary: [
+                { sv: "Miitam", ja: "こんにちは" },
+                { sv: "Riikazu", ja: "ありがとう" },
+                { sv: "Maatio", ja: "おはよう" },
+                { sv: "Apke", ja: "リンゴ" },
+                { sv: "Mizu", ja: "水" },
+                { sv: "Book", ja: "本" },
+                { sv: "Dek", ja: "犬" },
+                { sv: "Langa", ja: "言葉" },
+                { sv: "akamal-Langa", ja: "人工言語" },
+                { sv: "Rãva", ja: "文化" },
+                { sv: "Piim-Sokus", ja: "宝石" },
+                { sv: "Shellfun", ja: "シェル文字" }
+            ],
+            examples: [
+                { sv: "Je si aet Apke.", ja: "私はリンゴを食べる。" },
+                { sv: "Apke lo Je si aet.", ja: "助詞で語順を変えても同じ意味。" },
+                { sv: "¿ Ye si aet Meki ?", ja: "あなたは何を食べますか？" },
+                { sv: "¡ Je si nem !", ja: "私は幸せだ！" },
+                { sv: "Je si ren Ka'n.", ja: "私は走った。" },
+                { sv: "Pela-Huu do Jakam Mento Frãns, An Ye si woke Madan Dek Engla nar, Masa Je si Ravaa Mizu Masa Caree Masa Shell-Book.", ja: "全ての文字を使ったパングラム。" }
+            ]
+        };
+
+        // --- DOMエレメント ---
+        const editor = document.getElementById("editor");
+        const charStats = document.getElementById("charStats");
+        const symbolRenderArea = document.getElementById("symbolRenderArea");
+        const toast = document.getElementById("toast");
+        const fontFileInput = document.getElementById("fontFileInput");
+
+        // --- ステート ---
+        let currentDir = "rtl";
+        let currentFont = "handwriting";
+
+        // --- 初期化 ---
+        function init() {
+            setupControls();
+            renderKeyboard();
+            renderDictionary();
+            renderGrammar();
+            setupTabs();
+            updateEditorState();
+
+            // 初期例文を設定
+            editor.value = "¡ Miitam ! Je si Ravaa Shellfun.";
+            handleInput();
+        }
+
+        // 方向・フォント切り替えイベント
+        function setupControls() {
+            // 方向ボタン
+            document.querySelectorAll("#dirSeg button").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    currentDir = btn.dataset.v;
+                    document.documentElement.setAttribute("dir", currentDir);
+                    symbolRenderArea.setAttribute("dir", currentDir);
+                    document.querySelectorAll("#dirSeg button").forEach(b => {
+                        b.setAttribute("aria-pressed", String(b.dataset.v === currentDir));
+                    });
+                });
+            });
+
+            // フォント切り替えボタン
+            document.querySelectorAll("#fontSeg button").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    currentFont = btn.dataset.v;
+                    document.documentElement.setAttribute("data-font", currentFont);
+                    document.querySelectorAll("#fontSeg button").forEach(b => {
+                        b.setAttribute("aria-pressed", String(b.dataset.v === currentFont));
+                    });
+                    renderSymbols(); // SVGプレビュー更新
+                });
+            });
+
+            // フォントファイル読み込みハンドラ
+            fontFileInput.addEventListener("change", handleFontUpload);
+
+            // テキストエリア入力時
+            editor.addEventListener("input", handleInput);
+
+            // クリア＆コピーボタン
+            document.getElementById("btnClear").addEventListener("click", () => {
+                editor.value = "";
+                handleInput();
+                showToast("テキストを消去しました");
+            });
+
+            document.getElementById("btnCopy").addEventListener("click", () => {
+                if (!editor.value) return;
+                // ExecCommand fallback used as per guardrails
+                editor.select();
+                document.execCommand("copy");
+                showToast("クリップボードにコピーしました");
+            });
+
+            // 画像エクスポート（キャンバス描画）
+            document.getElementById("btnExportImg").addEventListener("click", exportPreviewAsImage);
+        }
+
+        // 入力時の処理
+        function handleInput() {
+            updateEditorState();
+            renderSymbols();
+        }
+
+        function updateEditorState() {
+            const count = editor.value.length;
+            charStats.textContent = `${count} 文字`;
+        }
+
+        // 自前文字グラフィック描画（フォントファイル未読み込み時でも視覚的体験を提供）
+        function renderSymbols() {
+            const text = editor.value;
+            symbolRenderArea.innerHTML = "";
+
+            if (!text.trim()) {
+                symbolRenderArea.innerHTML = `<span class="text-sm text-mut italic">入力された文字のシェル文様表現がここに表示されます...</span>`;
+                return;
+            }
+
+            // 文字列をトークン分割してSVG風のシェルシンボルとして描画
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+
+                if (char === " " || char === "\n") {
+                    const spacer = document.createElement("div");
+                    spacer.className = char === "\n" ? "w-full h-2" : "w-4 h-8 inline-block";
+                    symbolRenderArea.appendChild(spacer);
+                    continue;
+                }
+
+                const glyphNode = createGlyphElement(char);
+                symbolRenderArea.appendChild(glyphNode);
+            }
+        }
+
+        // アルファベットをモチーフにしたオリジナルのシェル文字風SVG要素作成
+        function createGlyphElement(char) {
+            const container = document.createElement("div");
+            container.className = "inline-flex flex-col items-center justify-center p-1 m-0.5 rounded border border-theme/40 bg-card/60 hover:border-acc transition-colors group relative cursor-pointer";
+            container.title = `Char: ${char}`;
+
+            const code = char.charCodeAt(0);
+            const isPixel = currentFont === "pixel";
+            
+            // 簡易SVGアイコンを生成（文字コードに基づいた象形描画）
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("width", "28");
+            svg.setAttribute("height", "28");
+            svg.setAttribute("viewBox", "0 0 32 32");
+            
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            
+            // シェル（貝殻・古代文様）モチーフの幾何学パターン生成
+            let d = "";
+            const mod = code % 8;
+
+            if (/[a-z]/i.test(char)) {
+                // 子音/母音向けの貝殻・らせん文様
+                if (isPixel) {
+                    // ドット風幾何学
+                    d = `M 6,6 H 26 V 26 H 6 Z M 10,10 V 22 H 22 V 10 Z M 14,14 H 18 V 18 H 14 Z`;
+                } else {
+                    // 滑らかな流線
+                    d = `M 16,4 C 8,4 4,10 4,16 C 4,24 10,28 16,28 C 22,28 28,24 28,16 C 28,8 20,4 16,4 Z M 16,8 C 20,8 24,11 24,16 C 24,21 19,24 16,24 C 12,24 8,20 8,16 C 8,10 12,8 16,8 Z`;
+                }
+            } else if (/[0-9]/.test(char)) {
+                // 数字表現
+                d = `M 8,8 L 24,8 L 16,24 Z M 12,12 L 20,12 L 16,20 Z`;
+            } else {
+                // 記号表現
+                d = `M 16,6 A 10,10 0 1,0 16,26 A 10,10 0 1,0 16,6 M 16,12 L 16,20`;
+            }
+
+            path.setAttribute("d", d);
+            path.setAttribute("fill", "currentColor");
+            path.className.baseVal = "text-acc group-hover:scale-105 transition-transform";
+            
+            svg.appendChild(path);
+            container.appendChild(svg);
+
+            // フォント自体の文字も小さなサブテキストとして付与
+            const label = document.createElement("span");
+            label.className = "sv text-[10px] text-mut mt-0.5";
+            label.textContent = char;
+            container.appendChild(label);
+
+            // クリックで該当文字を入力領域で強調（または削除）
+            container.addEventListener("click", () => {
+                showToast(`文字: "${char}"`);
+            });
+
+            return container;
+        }
+
+        // 仮想キーボード構築
+        function renderKeyboard() {
+            const vContainer = document.getElementById("vowelKeys");
+            const cContainer = document.getElementById("consonantKeys");
+            const ctrlContainer = document.getElementById("controlKeys");
+
+            // 母音キー
+            DATA.vowels.forEach(v => {
+                const btn = createKeyBtn(v.sv, `/${v.ipa}/`, "vowel");
+                vContainer.appendChild(btn);
+            });
+
+            // 子音キー
+            DATA.consonants.forEach(c => {
+                const btn = createKeyBtn(c.sv, `/${c.ipa}/`, "consonant");
+                cContainer.appendChild(btn);
+            });
+
+            // 制御・記号キー
+            DATA.controls.forEach(ctrl => {
+                const btn = document.createElement("button");
+                btn.className = "key-btn px-3 py-2 rounded-xl border border-theme bg-card hover:border-acc text-xs font-medium shadow-sm transition-all";
+                btn.textContent = ctrl.label;
+                btn.addEventListener("click", () => insertText(ctrl.val));
+                ctrlContainer.appendChild(btn);
+            });
+        }
+
+        // キーボタン作成ヘルパー
+        function createKeyBtn(mainText, subText, type) {
+            const btn = document.createElement("button");
+            const borderClass = type === "vowel" ? "border-acc/60 bg-acc/5" : "border-theme";
+            btn.className = `key-btn flex flex-col items-center justify-center p-2.5 min-w-[50px] rounded-xl border ${borderClass} bg-card hover:border-acc shadow-sm transition-all`;
+
+            btn.innerHTML = `
+                <span class="sv text-lg font-bold leading-none mb-1 text-fg">${mainText}</span>
+                <span class="text-[10px] text-mut font-mono">${subText}</span>
+            `;
+
+            btn.addEventListener("click", () => insertText(mainText));
+            return btn;
+        }
+
+        // テキスト挿入
+        function insertText(str) {
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            const val = editor.value;
+
+            editor.value = val.substring(0, start) + str + val.substring(end);
+            editor.selectionStart = editor.selectionEnd = start + str.length;
+            editor.focus();
+            handleInput();
+        }
+
+        // 辞書タブのレンダリング
+        function renderDictionary() {
+            const grid = document.getElementById("dictionaryGrid");
+            DATA.dictionary.forEach(item => {
+                const card = document.createElement("button");
+                card.className = "text-right p-2.5 rounded-xl border border-theme bg-card hover:border-acc hover:shadow-sm transition-all flex flex-col justify-between group";
+                card.innerHTML = `
+                    <span class="sv text-base font-bold text-acc group-hover:scale-105 transition-transform block">${item.sv}</span>
+                    <span class="text-xs text-mut">${item.ja}</span>
+                `;
+                card.addEventListener("click", () => {
+                    insertText(" " + item.sv + " ");
+                    showToast(`"${item.sv}" を挿入しました`);
+                });
+                grid.appendChild(card);
+            });
+        }
+
+        // 文法ガイドタブのレンダリング
+        function renderGrammar() {
+            const pList = document.getElementById("particleList");
+            DATA.particles.forEach(([p, desc]) => {
+                const row = document.createElement("div");
+                row.className = "flex items-center justify-between p-2 rounded-lg border border-theme bg-card text-xs";
+                row.innerHTML = `
+                    <span class="sv font-bold text-acc text-sm">${p}</span>
+                    <span class="text-mut">${desc}</span>
+                `;
+                pList.appendChild(row);
+            });
+
+            const eList = document.getElementById("exampleList");
+            DATA.examples.forEach(ex => {
+                const box = document.createElement("div");
+                box.className = "p-2.5 rounded-xl border border-theme bg-card hover:border-acc/50 transition-colors cursor-pointer";
+                box.innerHTML = `
+                    <div class="sv text-sm font-semibold text-fg">${ex.sv}</div>
+                    <div class="text-xs text-mut mt-0.5">${ex.ja}</div>
+                `;
+                box.addEventListener("click", () => {
+                    editor.value = ex.sv;
+                    handleInput();
+                    showToast("例文をエディタに読み込みました");
+                });
+                eList.appendChild(box);
+            });
+        }
+
+        // タブ切り替え
+        function setupTabs() {
+            document.querySelectorAll(".tab-btn").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const target = btn.dataset.tab;
+                    document.querySelectorAll(".tab-btn").forEach(b => {
+                        b.classList.remove("border-acc", "text-acc");
+                        b.classList.add("border-transparent", "text-mut");
+                    });
+                    btn.classList.remove("border-transparent", "text-mut");
+                    btn.classList.add("border-acc", "text-acc");
+
+                    document.querySelectorAll(".tab-content").forEach(c => c.classList.add("hidden"));
+                    document.getElementById(target).classList.remove("hidden");
+                });
+            });
+        }
+
+        // 外部フォントファイルのダイナミック読み込み
+        function handleFontUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const fontData = event.target.result;
+                const fontName = currentFont === "handwriting" ? "CustomShellfunHandwriting" : "CustomShellfunPixel";
+                
+                const newFont = new FontFace(fontName, fontData);
+                newFont.load().then(loadedFont => {
+                    document.fonts.add(loadedFont);
+                    showToast(`フォント "${file.name}" を適用しました！`);
+                    document.getElementById("fontStatusNotice").textContent = `読み込み済み: ${file.name}`;
+                    document.getElementById("fontStatusNotice").classList.add("text-acc");
+                }).catch(err => {
+                    console.error(err);
+                    showToast("フォントの読み込みに失敗しました");
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // 画像としてエクスポート
+        function exportPreviewAsImage() {
+            const text = editor.value;
+            if (!text) {
+                showToast("エディタに文字を入力してください");
+                return;
+            }
+
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            canvas.width = 800;
+            canvas.height = 400;
+
+            // 背景描画
+            ctx.fillStyle = "#f6f1e7";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 枠線
+            ctx.strokeStyle = "#2f6f5e";
+            ctx.lineWidth = 4;
+            ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+
+            // タイトル
+            ctx.fillStyle = "#2f6f5e";
+            ctx.font = "bold 24px serif";
+            ctx.fillText("Shellvail - シェルヴァイル語", 40, 60);
+
+            // 本文
+            ctx.fillStyle = "#1d1b17";
+            ctx.font = "32px serif";
+            
+            // 簡易改行レンダリング
+            const lines = text.split("\n");
+            let y = 140;
+            lines.forEach(line => {
+                ctx.fillText(line, 40, y);
+                y += 50;
+            });
+
+            // フッター
+            ctx.fillStyle = "#6b655a";
+            ctx.font = "14px sans-serif";
+            ctx.fillText("Generated via Shellvail Typing Tool", 40, 360);
+
+            // ダウンロード処理
+            const link = document.createElement("a");
+            link.download = "shellvail-text.png";
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+            showToast("画像をダウンロードしました");
+        }
+
+        // トースト表示
+        function showToast(msg) {
+            toast.textContent = msg;
+            toast.classList.remove("opacity-0", "pointer-events-none", "translate-y-2");
+            toast.classList.add("opacity-100", "translate-y-0");
+
+            setTimeout(() => {
+                toast.classList.remove("opacity-100", "translate-y-0");
+                toast.classList.add("opacity-0", "pointer-events-none", "translate-y-2");
+            }, 2500);
+        }
+
+        // 開始
+        window.addEventListener("DOMContentLoaded", init);
+    </script>
+</body>
+
+</html>
